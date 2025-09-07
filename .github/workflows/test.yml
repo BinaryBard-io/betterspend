@@ -1,0 +1,112 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: betterspend_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'pnpm'
+
+    - name: Install pnpm
+      uses: pnpm/action-setup@v2
+      with:
+        version: 8
+
+    - name: Install dependencies
+      run: pnpm install --frozen-lockfile
+
+    - name: Setup test database
+      run: |
+        cp env.example .env.test
+        echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/betterspend_test" >> .env.test
+        echo "NEXTAUTH_SECRET=test-secret" >> .env.test
+        echo "NEXTAUTH_URL=http://localhost:3000" >> .env.test
+
+    - name: Generate Prisma client
+      run: pnpm db:generate
+
+    - name: Run database migrations
+      run: pnpm db:push
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/betterspend_test
+
+    - name: Run type checking
+      run: pnpm type-check
+
+    - name: Run linting
+      run: pnpm lint
+
+    - name: Run unit tests
+      run: pnpm test:unit --coverage
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/betterspend_test
+        NEXTAUTH_SECRET: test-secret
+        NEXTAUTH_URL: http://localhost:3000
+
+    - name: Run integration tests
+      run: pnpm test:integration
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/betterspend_test
+        NEXTAUTH_SECRET: test-secret
+        NEXTAUTH_URL: http://localhost:3000
+
+    - name: Build application
+      run: pnpm build
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/betterspend_test
+        NEXTAUTH_SECRET: test-secret
+        NEXTAUTH_URL: http://localhost:3000
+
+    - name: Install Playwright browsers
+      run: pnpm exec playwright install --with-deps
+
+    - name: Run E2E tests
+      run: pnpm test:e2e
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/betterspend_test
+        NEXTAUTH_SECRET: test-secret
+        NEXTAUTH_URL: http://localhost:3000
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results
+        path: |
+          test-results/
+          coverage/
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage/lcov.info
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
